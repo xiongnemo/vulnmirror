@@ -1,0 +1,21 @@
+CREATE INDEX ix_cve_published ON cve(date_published);
+CREATE INDEX ix_nvd_published ON nvd(published);
+CREATE INDEX ix_affected_cve ON affected(cve_id, provider);
+CREATE INDEX ix_affected_vp ON affected(vendor COLLATE NOCASE, product COLLATE NOCASE);
+CREATE INDEX ix_reference_cve ON reference(cve_id, provider, kind);
+CREATE INDEX ix_reference_kind ON reference(kind);
+CREATE INDEX ix_weakness_cve ON weakness(cve_id, provider);
+CREATE INDEX ix_weakness_cwe ON weakness(cwe_id);
+CREATE INDEX ix_metric_cve ON metric(cve_id, provider);
+CREATE INDEX ix_cpe_cve ON nvd_cpe(cve_id);
+CREATE INDEX ix_cpe_vp ON nvd_cpe(vendor, product);
+CREATE INDEX ix_cpe_part ON nvd_cpe(part);
+CREATE INDEX ix_ghsa_alias ON ghsa_alias(alias);
+CREATE INDEX ix_ghsa_alias_id ON ghsa_alias(ghsa_id);
+CREATE INDEX ix_ghsa_affected ON ghsa_affected(ghsa_id);
+CREATE INDEX ix_ghsa_pkg ON ghsa_affected(ecosystem, package);
+CREATE INDEX ix_ghsa_ref ON ghsa_reference(ghsa_id);
+CREATE INDEX ix_ghsa_cwe ON ghsa_cwe(ghsa_id);
+CREATE INDEX ix_ghsa_cwe_id ON ghsa_cwe(cwe_id);
+-- Planner statistics: without them SQLite picks ix_reference_kind for per-CVE EXISTS probes.
+ANALYZE;
