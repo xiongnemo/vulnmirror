@@ -1,0 +1,20 @@
+name: ci-macos-3.12
+
+# One cell of the README badge matrix: macos x Python 3.12. The steps live in test.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  test:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yml
+    with:
+      os: macos-latest
+      python: "3.12"

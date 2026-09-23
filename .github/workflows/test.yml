@@ -1,0 +1,41 @@
+name: test (reusable)
+
+# The one definition of the test steps. Called by the ci-*.yml workflows (one per badge cell)
+# and by release.yml, so CI and releases always run the same checks.
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: runner label, e.g. ubuntu-latest
+        required: true
+        type: string
+      python:
+        description: Python version, e.g. "3.12"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  test:
+    name: ${{ inputs.os }} / Python ${{ inputs.python }}
+    runs-on: ${{ inputs.os }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: false
+      - name: Tests
+        run: uv run --locked --python ${{ inputs.python }} pytest -q
+      - name: Lint
+        if: inputs.os == 'ubuntu-latest' && inputs.python == '3.12'
+        run: |
+          uv run --locked ruff check src tests scripts
+          uv run --locked ruff format --check src tests scripts

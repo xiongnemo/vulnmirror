@@ -15,28 +15,17 @@ permissions: {}
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    # Same steps and the same matrix as the CI badge cells (see test.yml).
     strategy:
       matrix:
+        os: [ubuntu-latest, macos-latest]
         python: ["3.11", "3.12", "3.13"]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          enable-cache: false
-      - name: Tests
-        run: uv run --locked --python ${{ matrix.python }} pytest -q
-      - name: Lint
-        if: matrix.python == '3.12'
-        run: |
-          uv run --locked ruff check src tests scripts
-          uv run --locked ruff format --check src tests scripts
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yml
+    with:
+      os: ${{ matrix.os }}
+      python: ${{ matrix.python }}
 
   build:
     needs: test

@@ -42,8 +42,8 @@ git push origin main "v$(uv version --short)"
 ```
 
 Then on GitHub: Actions → "Release to PyPI" → the run for the tag → **Review deployments** →
-approve `pypi`. The run tests on Python 3.11 to 3.13, checks that the tag matches the project
-version, builds, smoke-tests the wheel and the sdist, attests (PEP 740) and uploads.
+approve `pypi`. The run tests on Ubuntu and macOS with Python 3.11 to 3.13 (the same steps as CI, from
+`test.yml`), checks that the tag matches the project version, builds, smoke-tests the wheel and the sdist, attests (PEP 740) and uploads.
 
 The tag must match `vX.Y.Z` (optionally `rcN`, `aN`, `bN`) and equal the version in
 `pyproject.toml`; otherwise the build job stops before anything is uploaded.
