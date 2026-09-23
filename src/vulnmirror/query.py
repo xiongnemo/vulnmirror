@@ -50,11 +50,14 @@ def filter_sql(
     date_from=None,
     date_to=None,
     state="PUBLISHED",
+    as_json=False,
 ) -> tuple:
     """One query over CNA/ADP `affected` and NVD `nvd_cpe`; each hit reports which source matched.
 
     NVD models a device as vulnerable firmware ('o', vulnerable=1) running on hardware
     ('h', vulnerable=0), so hardware queries need cpe_scope='any'.
+    as_json=True returns `sources` and `products` as JSON arrays instead of comma-joined text
+    (product names may themselves contain commas).
     """
     parts, params = [], []
 
@@ -84,10 +87,11 @@ def filter_sql(
     if date_to:
         window.append("substr(COALESCE(n.published, c.date_published),1,10) <= ?")
         wparams.append(date_to)
+    agg = "json_group_array" if as_json else "group_concat"
     sql = (
         "SELECT h.cve_id, c.state, COALESCE(n.published, c.date_published) AS published, c.assigner,"
-        " group_concat(DISTINCT h.source) AS sources,"
-        " group_concat(DISTINCT h.vendor || ':' || h.product) AS products"
+        f" {agg}(DISTINCT h.source) AS sources,"
+        f" {agg}(DISTINCT h.vendor || ':' || h.product) AS products"
         f" FROM ({' UNION '.join(parts)}) h"
         " JOIN cve c ON c.id = h.cve_id LEFT JOIN nvd n ON n.cve_id = h.cve_id"
         " WHERE c.state = ?" + "".join(f" AND {w}" for w in window) + " GROUP BY h.cve_id ORDER BY published"

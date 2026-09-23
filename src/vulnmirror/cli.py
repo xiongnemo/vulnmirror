@@ -3,11 +3,13 @@
 import argparse
 import csv
 import json
+import os
 import sys
 import time
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
-from vulnmirror import build, cases, config, fetch, ghsa, query, update
+from vulnmirror import build, cases, config, fetch, ghsa, query, serve, update
 from vulnmirror.config import Paths
 
 
@@ -173,6 +175,35 @@ def cmd_filter(args, paths: Paths) -> int:
     return 0
 
 
+def cmd_serve(args, paths: Paths) -> int:
+    token = None
+    if args.token_file:
+        token = Path(args.token_file).read_text(encoding="utf-8").strip()
+        if not token:
+            raise ValueError(f"{args.token_file} is empty")
+    elif os.environ.get("VULNMIRROR_TOKEN", "").strip():
+        token = os.environ["VULNMIRROR_TOKEN"].strip()
+    if args.max_limit < 1 or args.timeout <= 0:
+        raise ValueError("--max-limit must be at least 1 and --timeout positive")
+    if not paths.db.exists():
+        raise FileNotFoundError(f"no database at {paths.db}; run `vulnmirror build` first")
+    settings = serve.Settings(
+        paths=paths, token=token, cors_origin=args.cors_origin, max_limit=args.max_limit, timeout_s=args.timeout
+    )
+    server = serve.make_server(settings, args.host, args.port)
+    host, port = server.server_address[:2]
+    if not serve.is_loopback(args.host) and not token:
+        _log("warning: serving on a non-loopback address without a token; anyone who can reach it can query it")
+    _log(f"serving {paths.db} read-only on http://{host}:{port}" + ("  (bearer token required)" if token else ""))
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        _log("stopped")
+    finally:
+        server.server_close()
+    return 0
+
+
 # ---------------------------------------------------------------- parser
 def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="vulnmirror", description="Local mirror of CVE, NVD, KEV and GHSA metadata.")
@@ -232,6 +263,17 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--count", action="store_true")
     fmt_opts(p)
 
+    p = sub.add_parser("serve", help="serve the mirror read-only as a JSON API over HTTP")
+    p.add_argument("--host", default="127.0.0.1", help="bind address (default loopback only)")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument(
+        "--token-file",
+        help="require 'Authorization: Bearer <token>'; the token is read from FILE (or set $VULNMIRROR_TOKEN)",
+    )
+    p.add_argument("--cors-origin", help="value for Access-Control-Allow-Origin, e.g. '*' or https://example.org")
+    p.add_argument("--max-limit", type=int, default=1000, help="largest page size a search may ask for")
+    p.add_argument("--timeout", type=float, default=30.0, help="per-request query time limit, seconds")
+
     p = sub.add_parser("config", help="show or set the data directory")
     csub = p.add_subparsers(dest="action", required=True)
     csub.add_parser("show")
@@ -249,6 +291,7 @@ COMMANDS = {
     "get": cmd_get,
     "sql": cmd_sql,
     "filter": cmd_filter,
+    "serve": cmd_serve,
 }
 
 

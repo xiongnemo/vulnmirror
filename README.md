@@ -1,5 +1,13 @@
 # vulnmirror
 
+[![PyPI](https://img.shields.io/pypi/v/vulnmirror)](https://pypi.org/project/vulnmirror/)
+[![Python](https://img.shields.io/pypi/pyversions/vulnmirror)](https://pypi.org/project/vulnmirror/)
+
+| CI | Python 3.11 | Python 3.12 | Python 3.13 |
+|---|---|---|---|
+| Ubuntu | [![ubuntu 3.11](https://github.com/xiongnemo/vulnmirror/actions/workflows/ci-ubuntu-py3.11.yml/badge.svg?branch=main)](https://github.com/xiongnemo/vulnmirror/actions/workflows/ci-ubuntu-py3.11.yml) | [![ubuntu 3.12](https://github.com/xiongnemo/vulnmirror/actions/workflows/ci-ubuntu-py3.12.yml/badge.svg?branch=main)](https://github.com/xiongnemo/vulnmirror/actions/workflows/ci-ubuntu-py3.12.yml) | [![ubuntu 3.13](https://github.com/xiongnemo/vulnmirror/actions/workflows/ci-ubuntu-py3.13.yml/badge.svg?branch=main)](https://github.com/xiongnemo/vulnmirror/actions/workflows/ci-ubuntu-py3.13.yml) |
+| macOS | [![macos 3.11](https://github.com/xiongnemo/vulnmirror/actions/workflows/ci-macos-py3.11.yml/badge.svg?branch=main)](https://github.com/xiongnemo/vulnmirror/actions/workflows/ci-macos-py3.11.yml) | [![macos 3.12](https://github.com/xiongnemo/vulnmirror/actions/workflows/ci-macos-py3.12.yml/badge.svg?branch=main)](https://github.com/xiongnemo/vulnmirror/actions/workflows/ci-macos-py3.12.yml) | [![macos 3.13](https://github.com/xiongnemo/vulnmirror/actions/workflows/ci-macos-py3.13.yml/badge.svg?branch=main)](https://github.com/xiongnemo/vulnmirror/actions/workflows/ci-macos-py3.13.yml) |
+
 A local, incrementally updated SQLite mirror of public vulnerability metadata:
 
 | Source | What it contributes | Incremental channel |
@@ -163,6 +171,44 @@ vulnmirror filter --cpe-part h --cpe-scope any --from 2024-06-01 --to 2025-05-31
   hours to days apart; say which one a count uses.
 - **Only GitHub-reviewed advisories** reliably carry package ecosystems and version ranges.
 
+## Serving a read-only API: `vulnmirror serve`
+
+```sh
+vulnmirror serve                                            # http://127.0.0.1:8765, loopback only
+VULNMIRROR_TOKEN=... vulnmirror serve --host 0.0.0.0        # reachable from other machines, token required
+vulnmirror serve --token-file ~/.config/vulnmirror/token --cors-origin '*'
+```
+
+| Endpoint | Returns |
+|---|---|
+| `GET /healthz` | liveness check (no token needed) |
+| `GET /v1/status` | sync markers and row counts |
+| `GET /v1/cve/{id}` | everything the mirror holds about one CVE: CVE and NVD records, affected products, references, CWEs, CVSS, CPEs, KEV entry, GHSA aliases |
+| `GET /v1/ghsa/{id}` | one advisory: aliases, packages with version ranges, references, CWEs |
+| `GET /v1/search/cves` | a paginated `filter`: `vendor` (repeatable), `product_like`, `cpe_part`, `cpe_scope`, `from`, `to`, `state`, `limit`, `offset`; needs at least one of `vendor`, `product_like`, `cpe_part` |
+| `GET /openapi.json` | OpenAPI 3.1 description of the above |
+
+```sh
+curl -s localhost:8765/v1/cve/CVE-2024-3094
+curl -s 'localhost:8765/v1/search/cves?cpe_part=h&cpe_scope=any&from=2024-06-01&to=2025-05-31&limit=10'
+curl -s -H "Authorization: Bearer $VULNMIRROR_TOKEN" server.example.org:8765/v1/status
+```
+
+Every response carries a `snapshot` object (sync markers and the advisory-database commit),
+so a number can always be traced to the data it was read from.
+
+- **Read-only.** The database is opened with `mode=ro` and `PRAGMA query_only`, and an SQLite
+  authorizer allows nothing but reads (no `ATTACH`, no `PRAGMA`, no writes). No endpoint takes SQL.
+- **Live data.** Each request opens its own connection, so `vulnmirror update` or `build` can run
+  while serving; the next request sees the new data without a restart.
+- **Bounded work.** Every query runs under `--timeout` (default 30 s, then 504) and page sizes are
+  capped by `--max-limit` (default 1000). On the full mirror, a vendor-substring search or a
+  hardware-CPE window search took 1.5 to 2.7 s (2026-09-24, warm cache).
+- **Exposure.** The server binds to loopback unless `--host` says otherwise, and warns when it
+  listens elsewhere without a token. The token comes from `--token-file` or `$VULNMIRROR_TOKEN`,
+  never from the command line, so it does not show in process lists; clients send
+  `Authorization: Bearer <token>`. Put a reverse proxy in front for TLS and rate limiting.
+
 ## Data terms
 
 vulnmirror downloads data; it does not redistribute it. Each source has its own terms:
@@ -187,6 +233,10 @@ VULNMIRROR_REGRESSION=1 uv run pytest -m regression   # checks a real mirror aga
 uv run ruff check src tests && uv run ruff format --check src tests
 uv build                                       # sdist and wheel in dist/
 ```
+
+CI runs the tests on Ubuntu and macOS with Python 3.11 to 3.13 on every push and pull request.
+Each cell of the badge table above is its own workflow (`.github/workflows/ci-<os>-py<version>.yml`);
+all of them, and the release workflow, call the same steps in `.github/workflows/test.yml`.
 
 The regression tests compare a real mirror with counts computed independently from the NVD API
 on 2026-09-23 (for example 42,612 non-rejected CVEs published 2024-06-01 to 2025-05-31). NVD
