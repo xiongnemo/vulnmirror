@@ -9,7 +9,7 @@ import time
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from vulnmirror import build, cases, config, fetch, ghsa, query, serve, update
+from vulnmirror import build, cases, config, fetch, ghsa, logs, query, serve, update
 from vulnmirror.config import Paths
 
 
@@ -209,32 +209,41 @@ def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="vulnmirror", description="Local mirror of CVE, NVD, KEV and GHSA metadata.")
     ap.add_argument("--version", action="version", version=f"vulnmirror {_version()}")
     ap.add_argument("--home", help="data directory (overrides $VULNMIRROR_HOME and the config file)")
+    verbose_help = "more diagnostics on stderr: -v progress, -vv network requests and git, -vvv SQL statements"
+    ap.add_argument("-v", "--verbose", action="count", default=0, help=verbose_help)
+    # The same flag after the subcommand ("vulnmirror update -vv"); SUPPRESS keeps an
+    # unused subcommand flag from resetting a count given before the subcommand.
+    verbosity = argparse.ArgumentParser(add_help=False)
+    verbosity.add_argument("-v", "--verbose", action="count", default=argparse.SUPPRESS, help=verbose_help)
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
+
+    def add_cmd(name, **kw):
+        return sub.add_parser(name, parents=[verbosity], **kw)
 
     def fmt_opts(p):
         p.add_argument("--format", choices=["tsv", "csv", "json", "jsonl"], default="tsv")
         p.add_argument("-o", "--output", help="write to FILE instead of stdout")
 
-    p = sub.add_parser("init", help="first-time setup: fetch, clone GHSA, build, update")
+    p = add_cmd("init", help="first-time setup: fetch, clone GHSA, build, update")
     p.add_argument("--jobs", type=int, default=6)
     p.add_argument("--no-retry", action="store_true", help="stop at the first network failure")
     p.add_argument("--retry-interval", type=int, default=60)
 
-    p = sub.add_parser("fetch", help="download raw sources (resumable; skips files already current)")
+    p = add_cmd("fetch", help="download raw sources (resumable; skips files already current)")
     p.add_argument("--only", default="cvelist,nvd,kev")
     p.add_argument("--jobs", type=int, default=6)
     p.add_argument("--retry-forever", action="store_true", help="keep retrying through network outages")
     p.add_argument("--retry-interval", type=int, default=60)
 
-    sub.add_parser("build", help="rebuild the database from raw sources")
+    add_cmd("build", help="rebuild the database from raw sources")
 
-    p = sub.add_parser("update", help="incremental update in place")
+    p = add_cmd("update", help="incremental update in place")
     p.add_argument("--only", default=",".join(update.SOURCES))
 
-    p = sub.add_parser("status", help="sync markers, their age, row counts")
+    p = add_cmd("status", help="sync markers, their age, row counts")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("get", help="download individual records by identifier or URL")
+    p = add_cmd("get", help="download individual records by identifier or URL")
     p.add_argument("refs", nargs="*", help="CVE / GHSA identifiers or URLs")
     p.add_argument("-f", "--file", action="append", help="file with one reference per line ('-' = stdin); repeatable")
     p.add_argument("-t", "--type", choices=cases.KINDS, help="record type; default: inferred (a CVE gets cve + nvd)")
@@ -243,11 +252,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--print", action="store_true", help="print the stored JSON to stdout")
     p.add_argument("--jobs", type=int, default=8)
 
-    p = sub.add_parser("sql", help="run a read-only SQL statement")
+    p = add_cmd("sql", help="run a read-only SQL statement")
     p.add_argument("statement")
     fmt_opts(p)
 
-    p = sub.add_parser("filter", help="select CVEs by vendor / product / NVD CPE part / date window")
+    p = add_cmd("filter", help="select CVEs by vendor / product / NVD CPE part / date window")
     p.add_argument("--vendor", action="append", help="case-insensitive substring; repeatable")
     p.add_argument("--product-like", help="SQL LIKE pattern on the product name")
     p.add_argument("--cpe-part", choices=["a", "o", "h"])
@@ -263,7 +272,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--count", action="store_true")
     fmt_opts(p)
 
-    p = sub.add_parser("serve", help="serve the mirror read-only as a JSON API over HTTP")
+    p = add_cmd("serve", help="serve the mirror read-only as a JSON API over HTTP")
     p.add_argument("--host", default="127.0.0.1", help="bind address (default loopback only)")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument(
@@ -274,7 +283,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--max-limit", type=int, default=1000, help="largest page size a search may ask for")
     p.add_argument("--timeout", type=float, default=30.0, help="per-request query time limit, seconds")
 
-    p = sub.add_parser("config", help="show or set the data directory")
+    p = add_cmd("config", help="show or set the data directory")
     csub = p.add_subparsers(dest="action", required=True)
     csub.add_parser("show")
     sh = csub.add_parser("set-home")
@@ -297,6 +306,7 @@ COMMANDS = {
 
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
+    logs.setup(args.verbose)
     home, source = config.resolve_home(args.home)
     paths = Paths(home)
     try:

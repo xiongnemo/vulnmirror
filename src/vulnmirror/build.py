@@ -9,7 +9,7 @@ import sqlite3
 import zipfile
 from pathlib import Path
 
-from vulnmirror import ghsa, records
+from vulnmirror import ghsa, logs, records
 from vulnmirror.config import Paths
 
 
@@ -44,7 +44,7 @@ def build(paths: Paths, log=print) -> dict:
     manifest = json.loads(paths.manifest.read_text())
     tmp = Path(str(paths.db) + ".building")
     tmp.unlink(missing_ok=True)
-    db = sqlite3.connect(tmp)
+    db = logs.trace_sql(sqlite3.connect(tmp))
     db.executescript(records.sql_text("schema.sql"))
     db.execute("PRAGMA journal_mode=OFF")
     db.execute("PRAGMA synchronous=OFF")

@@ -13,16 +13,19 @@ its sync marker unchanged, so running update again retries the same window.
 """
 
 import datetime as dt
+import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
-from vulnmirror import fetch, ghsa, net, records
+from vulnmirror import fetch, ghsa, logs, net, records
 from vulnmirror.config import Paths
 
 DELTA_LOG = "https://raw.githubusercontent.com/CVEProject/cvelistV5/main/cves/deltaLog.json"
 OVERLAP = dt.timedelta(hours=1)
 NVD_MAX_GAP = dt.timedelta(days=7)
 SOURCES = ("cvelist", "nvd", "kev", "ghsa")
+
+log = logging.getLogger("vulnmirror.update")
 
 
 class NeedFullRebuild(RuntimeError):
@@ -39,20 +42,27 @@ def update_cvelist(db: sqlite3.Connection, paths: Paths, jobs: int = 16) -> str:
     since = records.get_state(db, "cvelist_synced_through")
     if not since:
         raise NeedFullRebuild("no cvelist_synced_through in snapshot")
-    log = net.get_json(DELTA_LOG)
-    oldest = min(ts(e["fetchTime"]) for e in log)
+    delta = net.get_json(DELTA_LOG)
+    oldest = min(ts(e["fetchTime"]) for e in delta)
     start = ts(since) - OVERLAP
+    log.info(
+        "cvelist: synced through %s; delta log has %d batches from %s", since, len(delta), f"{oldest:%Y-%m-%d %H:%M}Z"
+    )
     if start < oldest:
         raise NeedFullRebuild(f"gap starts {start:%Y-%m-%d}, delta log starts {oldest:%Y-%m-%d}")
     changed, newest = {}, ts(since)
-    for e in log:
+    for e in delta:
         t = ts(e["fetchTime"])
         if t > start:
             for x in (e.get("new") or []) + (e.get("updated") or []):
                 changed[x["cveId"]] = x["githubLink"]
             newest = max(newest, t)
+    log.info(
+        "cvelist: %d records changed since %s; fetching with %d workers", len(changed), f"{start:%Y-%m-%d %H:%M}Z", jobs
+    )
     with ThreadPoolExecutor(max_workers=jobs) as ex:
         recs = list(ex.map(net.get_json, changed.values()))
+    log.info("cvelist: fetched %d records; writing", len(recs))
     with db:
         for rec in recs:
             cid = rec.get("cveMetadata", {}).get("cveId")
@@ -66,17 +76,25 @@ def update_cvelist(db: sqlite3.Connection, paths: Paths, jobs: int = 16) -> str:
 def update_nvd(db: sqlite3.Connection, paths: Paths) -> str:
     last = records.get_state(db, "nvd_synced_at")
     full = not last or dt.datetime.now(dt.UTC) - ts(last) > NVD_MAX_GAP
+    log.info(
+        "nvd: last synced %s; %s",
+        last or "never",
+        "full reload from the yearly feeds" if full else "applying modified + recent",
+    )
     if full:
-        metas = fetch.fetch_nvd(paths, jobs=6, log=lambda *_: None)
+        metas = fetch.fetch_nvd(paths, jobs=6, log=log.info)
         names = ["modified", "recent"] + sorted(m["feed"] for m in metas if m["feed"][0].isdigit())
     else:
         metas = [fetch.fetch_nvd_feed(paths, "modified"), fetch.fetch_nvd_feed(paths, "recent")]
+        for m in metas:
+            log.info("nvd %s: %s", m["feed"], m.get("status", "fetched"))
         names = ["modified", "recent"]
     seen = set()
     with db:
         if full:
             records.delete_all_nvd(db)
         for name in names:
+            log.info("nvd: loading feed %s", name)
             for c in records.iter_nvd_feed(paths.nvd_dir / f"nvdcve-2.0-{name}.json.gz"):
                 if c["id"] in seen:
                     continue
@@ -90,7 +108,7 @@ def update_nvd(db: sqlite3.Connection, paths: Paths) -> str:
 
 
 def update_kev(db: sqlite3.Connection, paths: Paths) -> str:
-    meta = fetch.fetch_kev(paths, log=lambda *_: None)
+    meta = fetch.fetch_kev(paths, log=log.info)
     with db:
         n = records.load_kev(db, paths.kev_file)
         records.set_state(db, kev_catalog=meta["catalogVersion"])
@@ -102,6 +120,7 @@ def update_ghsa(db: sqlite3.Connection, paths: Paths) -> str:
     if not repo.exists():
         ghsa.clone(repo)
     synced = records.get_state(db, "ghsa_commit")
+    log.info("ghsa: synced commit %s", synced[:12] if synced else "unset")
     if not synced or not ghsa.has_commit(repo, synced):
         # No recorded commit, or the mirror was re-cloned and no longer holds it: a diff is
         # impossible, so reload the GHSA tables from the current head.
@@ -126,9 +145,10 @@ def update(paths: Paths, only=SOURCES) -> list:
     """Run the requested sources; returns [(source, ok, message)]."""
     if not paths.db.exists():
         raise FileNotFoundError(f"no database at {paths.db}; run `vulnmirror build` first")
-    db = sqlite3.connect(paths.db)
+    db = logs.trace_sql(sqlite3.connect(paths.db))
     results = []
     for name in only:
+        log.info("%s: starting", name)
         try:
             results.append((name, True, STEPS[name](db, paths)))
         except NeedFullRebuild as e:

@@ -1,6 +1,7 @@
 """Network helpers: resumable downloads via curl, small JSON documents via urllib."""
 
 import json
+import logging
 import os
 import shutil
 import ssl
@@ -11,6 +12,8 @@ import urllib.request
 from pathlib import Path
 
 import certifi
+
+log = logging.getLogger("vulnmirror.net")
 
 
 class MissingTool(RuntimeError):
@@ -44,20 +47,36 @@ def download(url: str, dest: Path, resume: bool = True, retries: int = 5) -> Non
         "-o",
         str(part),
     ]
-    if resume and part.exists():
+    offset = part.stat().st_size if resume and part.exists() else 0
+    if offset:
         cmd[1:1] = ["-C", "-"]
-    subprocess.run([*cmd, url], check=True)
+    log.debug("GET %s -> %s%s", url, dest, f" (resuming at {offset:,} bytes)" if offset else "")
+    t0 = time.monotonic()
+    try:
+        subprocess.run([*cmd, url], check=True)
+    except subprocess.CalledProcessError as e:
+        log.debug("GET %s failed: curl exit %s after %.1fs", url, e.returncode, time.monotonic() - t0)
+        raise
+    size = part.stat().st_size
     part.replace(dest)
+    log.debug("GET %s done: %s bytes in %.1fs", url, f"{size:,}", time.monotonic() - t0)
 
 
 def get_text(url: str, retries: int = 5) -> str:
     curl = require("curl")
-    out = subprocess.run(
-        [curl, "-sS", "-L", "--fail", "--retry", str(retries), "--retry-all-errors", url],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    log.debug("GET %s", url)
+    t0 = time.monotonic()
+    try:
+        out = subprocess.run(
+            [curl, "-sS", "-L", "--fail", "--retry", str(retries), "--retry-all-errors", url],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        log.debug("GET %s failed: curl exit %s (%s)", url, e.returncode, (e.stderr or "").strip())
+        raise
+    log.debug("GET %s -> %s chars in %.2fs", url, f"{len(out.stdout):,}", time.monotonic() - t0)
     return out.stdout
 
 
@@ -76,17 +95,25 @@ def get_json(url: str, tries: int = 5, headers: dict | None = None):
     """GET a JSON document. 404 raises NotFound at once; other 4xx fail at once; 429/5xx/network retry."""
     req = urllib.request.Request(url, headers={"User-Agent": "vulnmirror", **(headers or {})})
     for i in range(tries):
+        attempt = f" (attempt {i + 1}/{tries})" if i else ""
+        log.debug("GET %s%s", url, attempt)
+        t0 = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=60, context=_CTX) as r:
-                return json.loads(r.read())
+                body = r.read()
+                log.debug("GET %s -> %s, %s bytes in %.2fs", url, r.status, f"{len(body):,}", time.monotonic() - t0)
+                return json.loads(body)
         except urllib.error.HTTPError as e:
+            log.debug("GET %s -> HTTP %s in %.2fs", url, e.code, time.monotonic() - t0)
             if e.code == 404:
                 raise NotFound(url) from e
             if 400 <= e.code < 500 and e.code != 429:
                 raise
             if i == tries - 1:
                 raise
-        except Exception:
+        except Exception as e:
+            log.debug("GET %s failed: %s", url, e)
             if i == tries - 1:
                 raise
+        log.debug("retrying %s in %ss", url, 2 * (i + 1))
         time.sleep(2 * (i + 1))

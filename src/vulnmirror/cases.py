@@ -31,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from vulnmirror import ghsa, net, records
+from vulnmirror import ghsa, logs, net, records
 from vulnmirror.config import Paths
 
 KINDS = ("cve", "nvd", "ghsa")
@@ -235,7 +235,7 @@ def ingest(paths: Paths, results: list) -> int:
     """Upsert downloaded or cached cases into the database; sync markers are left alone."""
     if not paths.db.exists():
         raise FileNotFoundError(f"no database at {paths.db}; run `vulnmirror build` first")
-    db = sqlite3.connect(paths.db)
+    db = logs.trace_sql(sqlite3.connect(paths.db))
     n = 0
     with db:
         for r in results:

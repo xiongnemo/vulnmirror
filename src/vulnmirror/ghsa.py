@@ -7,6 +7,7 @@ refs/vulnmirror/synced so a shallow repository keeps it for the next diff.
 """
 
 import json
+import logging
 import shutil
 import sqlite3
 import subprocess
@@ -20,8 +21,11 @@ RAW_BASE = "https://raw.githubusercontent.com/github/advisory-database/main/"
 PIN = "refs/vulnmirror/synced"
 TABLES = ("ghsa", "ghsa_alias", "ghsa_affected", "ghsa_reference", "ghsa_cwe")
 
+log = logging.getLogger("vulnmirror.ghsa")
+
 
 def git(repo: Path, *args: str) -> str:
+    log.debug("git -C %s %s", repo, " ".join(args))
     return subprocess.run(
         [net.require("git"), "-C", str(repo), *args], check=True, capture_output=True, text=True
     ).stdout
