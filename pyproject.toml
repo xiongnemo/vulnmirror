@@ -1,6 +1,6 @@
 [project]
 name = "vulnmirror"
-version = "0.2.0"
+version = "0.3.0"
 description = "A local, incrementally updated SQLite mirror of CVE Program, NVD, CISA KEV and GitHub Advisory Database metadata."
 readme = "README.md"
 requires-python = ">=3.11"

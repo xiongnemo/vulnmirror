@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 (2026-09-26)
+
+- `-v` / `-vv` / `-vvv` on every command, before or after the subcommand: step progress
+  (including the fetch progress `update` used to discard), then every network request and
+  response and every git command, then every SQL statement on writable connections. Output
+  goes to stderr; without the flag nothing changes.
+
 ## 0.2.0 (2026-09-24)
 
 - `vulnmirror serve`: a read-only JSON API over the mirror (status, CVE, GHSA, paginated search,

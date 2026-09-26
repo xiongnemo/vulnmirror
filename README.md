@@ -94,6 +94,17 @@ row changes nothing. Run it at least weekly:
 A full rebuild (`vulnmirror fetch && vulnmirror build`) writes to `vulnmirror.sqlite.building`
 and renames it into place when done, so queries keep working meanwhile.
 
+### Seeing what it does: `-v`
+
+Any command takes `-v`, `-vv` or `-vvv`, before or after the subcommand. Diagnostics go to
+stderr, so query output on stdout is unaffected; without the flag nothing changes.
+
+```sh
+vulnmirror -v update      # progress: what each source is fetching and how many records
+vulnmirror -vv update     # plus every network request and response, and every git command
+vulnmirror -vvv update    # plus every SQL statement written to the database (very long for NVD)
+```
+
 ## Individual records: `vulnmirror get`
 
 Fetch single records by identifier or URL, one at a time or from lists:
